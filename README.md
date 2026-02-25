@@ -1,74 +1,120 @@
-# UASpeech EDA & Cleaning Pipeline
+# Dysarthria Speech EDA & Cleaning
 
-Production-style exploratory data analysis and cleaning for the [UASpeech](https://www.isle.illinois.edu/sst/data/uaspeech/) corpus: pair audio with transcriptions, filter by duration and character density (CPS) outliers, and export a cleaned manifest.
+Pipeline for dysarthria speech datasets: discover audio and transcriptions, filter by duration and CPS outliers, export `metadata.csv` and distribution plots. Supports UASpeech-style layout and flat folder layouts (e.g. RAWDysPeech).
 
-## Setup
+---
+
+## Quick start
 
 ```bash
-cd /home/gera/PycharmProjects/uaspeech-eda-cleaning
 pip install -r requirements.txt
+python run_pipeline.py --list-datasets
+python run_pipeline.py --dataset uaspeech
 ```
 
-## Dataset layout (expected)
+Results: `reports/<dataset>_*.png`, `data/metadata.csv`.
 
-- **Dataset root** (e.g. `/home/gera/Downloads/uaspeech/UASpeech`):
-  - `audio/original/<Speaker>/` — `.wav` files named `<Speaker>_<Block>_<Word>_<Mic>.wav`
-  - `mlf/<Speaker>/<Speaker>_word.mlf` — transcriptions (HTK MLF format)
+---
 
-## Usage
+## How to add your own dataset
 
-Full pipeline (discovery → duration filter → CPS outlier filter → plots → CSV):
+### 1. Choose layout
+
+Your dataset is one of:
+
+- **UASpeech layout** — audio in `audio/original/<SpeakerID>/` and transcripts in `mlf/<SpeakerID>/<SpeakerID>_word.mlf` (HTK MLF). Example: [UASpeech](https://www.isle.illinois.edu/sst/data/uaspeech/).
+- **Flat layout** — `.wav` files in any subfolders (e.g. `0/`, `1/`), filenames like `CF02_B1_C10_M2.wav` (speaker = first segment). Transcripts must come from MLF files elsewhere (e.g. UASpeech `mlf/`).
+
+### 2. Edit `datasets.yaml`
+
+Add a new block under `datasets:` with a **unique name** (e.g. `my_dataset`):
+
+```yaml
+datasets:
+  my_dataset:
+    root: /absolute/path/to/your/audio/root
+    mlf_root: null
+    layout: uaspeech
+    output_manifest: metadata.csv
+```
+
+| Field | Meaning |
+|-------|--------|
+| **root** | Path to the dataset root (where audio lives). For UASpeech layout this root must contain `audio/original/` and `mlf/`. For flat layout it is the folder that contains your `.wav` subdirs. |
+| **mlf_root** | Path to the directory that contains `mlf/<SpeakerID>/<SpeakerID>_word.mlf`. Use `null` if transcripts live inside `root` (UASpeech layout). For flat layout, set this to the UASpeech root (or any path that has the `mlf/` tree). |
+| **layout** | `uaspeech` or `flat` (see above). |
+| **output_manifest** | Name of the output CSV in `data/` (e.g. `metadata.csv`). |
+
+**Examples:**
+
+- **UASpeech** (audio and MLF in one place):
+  ```yaml
+  my_uaspeech:
+    root: /data/UASpeech
+    mlf_root: null
+    layout: uaspeech
+    output_manifest: metadata.csv
+  ```
+
+- **Flat** (e.g. RAWDysPeech; transcripts from UASpeech):
+  ```yaml
+  my_raw:
+    root: /data/RAWDysPeech
+    mlf_root: /data/UASpeech
+    layout: flat
+    output_manifest: metadata.csv
+  ```
+
+### 3. Run
 
 ```bash
-python run_pipeline.py --dataset-root /home/gera/Downloads/uaspeech/UASpeech
+python run_pipeline.py --dataset my_dataset
 ```
 
-Options:
+Output: `reports/my_dataset_duration_distribution.png`, `reports/my_dataset_cps_distribution.png`, `data/metadata.csv`.
 
-- `--output-dir DIR` — where to write `reports/` and `data/` (default: project root)
-- `--min-duration SEC` — drop audio shorter than this (default: 3.0)
-- `--cps-method {iqr|zscore}` — outlier rule for Characters Per Second (default: iqr)
-- `--cps-z-threshold` — when using zscore (default: 3.0)
-- `--cps-iqr-mult` — IQR multiplier for bounds (default: 1.5)
-- `--sample N` — log a random sample of N records for manual review
-- `--n-jobs N` — parallel workers for reading audio
-- `-v` — verbose logging
+---
 
-Example with sampling for review:
+## How to run (without adding to config)
+
+You can run without editing `datasets.yaml` by passing paths:
 
 ```bash
-python run_pipeline.py --dataset-root /path/to/UASpeech --sample 20
+# UASpeech-style (layout auto-detected if audio/original exists)
+python run_pipeline.py --dataset-root /path/to/UASpeech
+
+# Flat layout (must pass MLF root and layout)
+python run_pipeline.py --dataset-root /path/to/RAWDysPeech --mlf-root /path/to/UASpeech --layout flat
 ```
+
+Optional: `--output-dir`, `--manifest`, `--min-duration`, `--cps-method`, `--sample N`, `--n-jobs`, `-v`. See `python run_pipeline.py --help`.
+
+---
 
 ## Outputs
 
-- **`reports/`** — distribution plots:
-  - `uaspeech_duration_distribution.png`
-  - `uaspeech_cps_distribution.png`
-- **`data/cleaned_manifest.csv`** — one row per retained recording: `path`, `speaker_id`, `basename`, `transcript`, `duration`, `sample_rate`, `char_count`, `cps`
+| Path | Description |
+|------|-------------|
+| `reports/<prefix>_duration_distribution.png` | Histogram of recording duration (after filters). |
+| `reports/<prefix>_cps_distribution.png` | Histogram of characters per second (CPS). |
+| `data/<output_manifest>` | Cleaned table: `path`, `speaker_id`, `basename`, `transcript`, `duration`, `sample_rate`, `char_count`, `cps`. |
 
-## Pipeline steps
+Pipeline steps: discover audio + transcripts → filter duration ≥ 3 s → compute CPS → remove CPS outliers (IQR or Z-score) → plot → write CSV. Optional `--sample N` logs N random rows for manual check.
 
-1. **Discovery** — traverse `audio/original/<Speaker>/*.wav` and pair each file with the word from `mlf/<Speaker>/<Speaker>_word.mlf`.
-2. **Duration filter** — keep only recordings with duration ≥ `min_duration_sec` (default 3.0 s).
-3. **Metrics** — compute duration and sample rate (via `soundfile`), character count, and **Character Density (CPS)** = `len(transcript) / duration`.
-4. **CPS outlier filter** — remove “garbage” (audio/text mismatch) using IQR or Z-score on CPS.
-5. **Plots** — histograms for duration and CPS (cleaned set).
-6. **Manifest** — save `cleaned_manifest.csv` under `data/`.
-7. **Sampling** — optional `sample_for_review(N)` logs N random records for manual checks.
+---
 
 ## Programmatic use
 
 ```python
 from pathlib import Path
-from src.uaspeech_processor import UASpeechProcessor
+from src.processor import DysarthriaProcessor
 
-processor = UASpeechProcessor(
-    dataset_root=Path("/path/to/UASpeech"),
+processor = DysarthriaProcessor(
+    dataset_root=Path("/path/to/audio/root"),
+    mlf_root=Path("/path/to/mlf/root"),
+    layout="flat",
     min_duration_sec=3.0,
-    cps_method="iqr",
     output_dir=Path("."),
 )
-processor.run()
-sample = processor.sample_for_review(10)
+processor.run(plot_prefix="mydata", manifest_filename="metadata.csv")
 ```

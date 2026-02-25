@@ -1,0 +1,12 @@
+datasets:
+  uaspeech:
+    root: /home/gera/Downloads/uaspeech/UASpeech
+    mlf_root: null
+    layout: uaspeech
+    output_manifest: metadata.csv
+
+  rawdyspeech:
+    root: /home/gera/Downloads/RAWDysPeech A Preprocessed Raw Audio Dataset For Speech Dysarthria/RAWDysPeech
+    mlf_root: /home/gera/Downloads/uaspeech/UASpeech
+    layout: flat
+    output_manifest: metadata.csv
